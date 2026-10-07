@@ -238,5 +238,5 @@ const seedCards = [
     if (!ex) await db.prepare('INSERT INTO cards (tier, display_name, masked_number, expiry, price, potential_earnings, gradient_from, gradient_to, sort_order) VALUES (?,?,?,?,?,?,?,?,?)').run(...c);
   }
   const PORT = process.env.PORT || 4000;
-  app.listen(PORT, '0.0.0.0', () => console.log('🚀 Coin Vault API on port ' + PORT));
+  app.listen(PORT, '0.0.0.0', () => console.log('🚀 Coin Vault API on port ' + PORT));})();
   

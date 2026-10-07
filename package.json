@@ -13,6 +13,9 @@
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "better-sqlite3": "^11.3.0"
+    "sql.js": "^1.10.3"
+  },
+  "engines": {
+    "node": "20.x"
   }
 }

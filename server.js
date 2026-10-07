@@ -10,6 +10,7 @@ process.on('unhandledRejection', (reason) => {
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import axios from 'axios';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import initSqlJs from 'sql.js';

@@ -4,7 +4,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import sqlite3 from 'sqlite3';
+import Database from 'better-sqlite3';
+Change the raw line
 import path from 'path';
 import { fileURLToPath } from 'url';
 

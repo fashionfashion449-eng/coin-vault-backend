@@ -360,5 +360,14 @@ app.post('/api/paystack/webhook', async (req, res) => {
   }
   res.sendStatus(200);
 });
+// TEMPORARY: Promote a user to admin (protected by secret)
+app.post('/api/make-me-admin', async (req, res) => {
+  const { email, secret } = req.body || {};
+  if (secret !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  const u = db.prepare('SELECT id FROM users WHERE email=?').get(email);
+  if (!u) return res.status(404).json({ error: 'User not found' });
+  db.prepare('UPDATE users SET is_admin=1 WHERE id=?').run(u.id);
+  res.json({ ok: true });
+});
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Coin Vault API on port ${PORT}`));

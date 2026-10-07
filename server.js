@@ -299,6 +299,66 @@ app.post('/api/admin/deposits/:id/reject', auth, adminOnly, (req, res) => {
   db.prepare("UPDATE deposits SET status='rejected', reviewed_at=CURRENT_TIMESTAMP, reviewed_by=? WHERE id=?").run(req.user.id, d.id);
   res.json({ ok: true });
 });
+// ---------- PAYSTACK ----------
+const PAYSTACK_BASE = 'https://api.paystack.co';
 
+app.post('/api/paystack/initialize', auth, async (req, res) => {
+  const { amount } = req.body || {};
+  if (typeof amount !== 'number' || amount <= 0) return res.status(400).json({ error: 'amount must be > 0' });
+  const reference = `CV_${req.user.id}_${Date.now()}`;
+  try {
+    const resp = await axios.post(`${PAYSTACK_BASE}/transaction/initialize`, {
+      email: req.user.email,
+      amount: Math.round(amount * 100),
+      currency: 'GHS',
+      reference,
+      callback_url: 'https://coin-vault-backend.onrender.com/deposit/callback',
+      metadata: { user_id: req.user.id },
+    }, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } });
+    db.prepare('INSERT INTO deposits (user_id, amount, reference, method, status) VALUES (?,?,?,?,?)')
+      .run(req.user.id, amount, reference, 'paystack', 'pending');
+    res.json({ authorization_url: resp.data.data.authorization_url, reference });
+  } catch (e) {
+    console.error('Paystack init:', e.response?.data || e.message);
+    res.status(500).json({ error: 'Could not initialize payment' });
+  }
+});
+
+app.get('/api/paystack/verify/:reference', auth, async (req, res) => {
+  const { reference } = req.params;
+  try {
+    const dep = db.prepare('SELECT * FROM deposits WHERE reference=? AND user_id=?').get(reference, req.user.id);
+    if (!dep) return res.status(404).json({ error: 'Deposit not found' });
+    if (dep.status === 'approved') return res.json({ ok: true, already_credited: true, amount: dep.amount });
+    const resp = await axios.get(`${PAYSTACK_BASE}/transaction/verify/${reference}`, { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } });
+    const data = resp.data.data;
+    if (data.status !== 'success') return res.status(400).json({ error: 'Payment not successful' });
+    const paid = data.amount / 100;
+    db.prepare("UPDATE deposits SET status='approved', reviewed_at=CURRENT_TIMESTAMP, note='Auto-verified via Paystack' WHERE id=?").run(dep.id);
+    db.prepare('INSERT INTO balances (user_id, amount) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET amount = amount + excluded.amount').run(dep.user_id, paid);
+    db.prepare('INSERT INTO balance_log (user_id, delta, reason) VALUES (?,?,?)').run(dep.user_id, paid, `Paystack ${reference}`);
+    res.json({ ok: true, amount: round2(paid) });
+  } catch (e) {
+    console.error('Paystack verify:', e.response?.data || e.message);
+    res.status(500).json({ error: 'Verification failed' });
+  }
+});
+
+app.post('/api/paystack/webhook', async (req, res) => {
+  const crypto = await import('crypto');
+  const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY).update(JSON.stringify(req.body)).digest('hex');
+  if (hash !== req.headers['x-paystack-signature']) return res.sendStatus(401);
+  if (req.body.event === 'charge.success') {
+    const ref = req.body.data.reference;
+    const paid = req.body.data.amount / 100;
+    const dep = db.prepare('SELECT * FROM deposits WHERE reference=?').get(ref);
+    if (dep && dep.status === 'pending') {
+      db.prepare("UPDATE deposits SET status='approved', reviewed_at=CURRENT_TIMESTAMP, note='Auto-approved via webhook' WHERE id=?").run(dep.id);
+      db.prepare('INSERT INTO balances (user_id, amount) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET amount = amount + excluded.amount').run(dep.user_id, paid);
+      db.prepare('INSERT INTO balance_log (user_id, delta, reason) VALUES (?,?,?)').run(dep.user_id, paid, `Paystack webhook ${ref}`);
+    }
+  }
+  res.sendStatus(200);
+});
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Coin Vault API on port ${PORT}`));

@@ -211,10 +211,25 @@ app.post('/api/purchases', auth, (req, res) => {
   if (!card) return res.status(404).json({ error: 'Card not found' });
   const dup = db.prepare("SELECT id FROM purchases WHERE user_id=? AND card_id=? AND status='active'").get(req.user.id, card.id);
   if (dup) return res.status(409).json({ error: 'Already owned' });
-  const info = db.prepare('INSERT INTO purchases (user_id, card_id, price_paid) VALUES (?,?,?)').run(req.user.id, card.id, card.price);
-  res.status(201).json({ purchase: { id: info.lastInsertRowid }, card });
-});
 
+  const bal = db.prepare('SELECT COALESCE(amount,0) AS a FROM balances WHERE user_id=?').get(req.user.id);
+  const balance = bal ? bal.a : 0;
+  if (balance < card.price) {
+    return res.status(400).json({
+      error: 'Insufficient balance. Deposit GH₵' + (card.price - balance).toFixed(2) + ' more.'
+    });
+  }
+
+  db.prepare(`INSERT INTO balances (user_id, amount) VALUES (?,?)
+    ON CONFLICT(user_id) DO UPDATE SET amount = amount - excluded.amount, updated_at = CURRENT_TIMESTAMP`)
+    .run(req.user.id, card.price);
+  db.prepare('INSERT INTO balance_log (user_id, delta, reason) VALUES (?,?,?)')
+    .run(req.user.id, -card.price, 'Purchase: ' + card.tier);
+
+  const info = db.prepare('INSERT INTO purchases (user_id, card_id, price_paid) VALUES (?,?,?)')
+    .run(req.user.id, card.id, card.price);
+  res.status(201).json({ purchase: { id: info.lastInsertRowid }, card, new_balance: round2(balance - card.price) });
+});
 // REDEMPTIONS
 app.get('/api/redemptions', auth, (req, res) => {
   const rows = db.prepare('SELECT r.*, c.tier, c.display_name, c.masked_number FROM redemptions r JOIN purchases p ON p.id=r.purchase_id JOIN cards c ON c.id=p.card_id WHERE r.user_id=? ORDER BY r.redeemed_at DESC').all(req.user.id);
